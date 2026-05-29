@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>xv6 Kernel Thread Study Guide</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#overview" aria-label="xv6 kernel thread study guide">
+      <span class="brand-mark">KT</span>
+      <span>
+        <strong>xv6 Kernel Thread</strong>
+        <small>Project 2-1 학습 자료</small>
+      </span>
+    </a>
+    <nav class="topnav" aria-label="main navigation">
+      <a href="#idea">이론</a>
+      <a href="#design">설계</a>
+      <a href="#implementation">코드</a>
+      <a href="#scenarios">흐름</a>
+      <a href="#quiz">점검</a>
+    </nav>
+  </header>
+
+  <aside class="slide-rail" aria-label="slide navigator">
+    <div class="rail-title">
+      <strong>Lecture Deck</strong>
+      <span>화살표 키로 이동</span>
+    </div>
+    <div id="slide-rail-list" class="slide-rail-list"></div>
+  </aside>
+
+  <main id="deck" class="deck">
+    <section id="overview" class="hero section-grid slide" data-title="문제의식">
+      <div class="hero-copy">
+        <p class="section-label">목표</p>
+        <h1><span>process와 thread를</span><span>하나의 커널 객체로</span><span>이해하기</span></h1>
+        <p class="lead">
+          이번 과제의 핵심은 xv6의 <code>struct proc</code>를 그대로 실행 단위로 사용하되,
+          주소 공간을 <code>mm_struct</code>로 분리하여 여러 task가 하나의 page table을 공유하도록 만드는 것입니다.
+          이 웹페이지는 명세, 구현 코드, 보고서 내용을 한 흐름으로 묶어 과제 전체를 복습할 수 있게 구성했습니다.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="#roadmap">학습 흐름 보기</a>
+          <a class="button secondary" href="#code-map">코드 지도 보기</a>
+        </div>
+      </div>
+
+      <div class="hero-panel" aria-label="project mental model">
+        <svg class="system-svg" viewBox="0 0 760 420" role="img" aria-labelledby="system-title system-desc">
+          <title id="system-title">xv6 kernel thread mental model</title>
+          <desc id="system-desc">Several proc objects share one mm_struct, while each proc keeps a private kernel stack and trapframe.</desc>
+          <defs>
+            <linearGradient id="line-gradient" x1="0%" x2="100%">
+              <stop offset="0%" stop-color="#0f766e"/>
+              <stop offset="100%" stop-color="#2563eb"/>
+            </linearGradient>
+          </defs>
+          <rect class="svg-bg" x="12" y="12" width="736" height="396" rx="18"/>
+          <g class="mm-box">
+            <rect x="252" y="70" width="256" height="112" rx="14"/>
+            <text x="380" y="108" text-anchor="middle" class="svg-title">mm_struct</text>
+            <text x="380" y="135" text-anchor="middle">pagetable + sz + refcount</text>
+            <text x="380" y="160" text-anchor="middle">공유 주소 공간</text>
+          </g>
+          <g class="proc-card">
+            <rect x="76" y="242" width="168" height="104" rx="13"/>
+            <text x="160" y="274" text-anchor="middle" class="svg-title">proc p0</text>
+            <text x="160" y="301" text-anchor="middle">group leader</text>
+            <text x="160" y="326" text-anchor="middle">private trapframe</text>
+          </g>
+          <g class="proc-card">
+            <rect x="296" y="242" width="168" height="104" rx="13"/>
+            <text x="380" y="274" text-anchor="middle" class="svg-title">proc p1</text>
+            <text x="380" y="301" text-anchor="middle">thread</text>
+            <text x="380" y="326" text-anchor="middle">private kstack</text>
+          </g>
+          <g class="proc-card">
+            <rect x="516" y="242" width="168" height="104" rx="13"/>
+            <text x="600" y="274" text-anchor="middle" class="svg-title">proc p2</text>
+            <text x="600" y="301" text-anchor="middle">thread</text>
+            <text x="600" y="326" text-anchor="middle">private context</text>
+          </g>
+          <path class="svg-link" d="M160 242 C160 203 262 188 312 176"/>
+          <path class="svg-link" d="M380 242 V182"/>
+          <path class="svg-link" d="M600 242 C600 203 498 188 448 176"/>
+          <text x="380" y="39" text-anchor="middle" class="svg-caption">같은 process처럼 보이는 이유는 같은 mm을 가리키기 때문입니다.</text>
+        </svg>
+      </div>
+    </section>
+
+    <section id="roadmap" class="roadmap slide" data-title="학습 흐름">
+      <div class="section-heading">
+        <p class="section-label">Roadmap</p>
+        <h2>공부 순서</h2>
+        <p>아래 순서대로 보면 “왜 이렇게 구현했는가”가 자연스럽게 연결됩니다.</p>
+      </div>
+      <div class="timeline">
+        <a href="#idea" class="timeline-step">
+          <span>1</span>
+          <strong>이론적 기반</strong>
+          <small>process, thread, address space, trapframe</small>
+        </a>
+        <a href="#design" class="timeline-step">
+          <span>2</span>
+          <strong>과제 설계</strong>
+          <small>mm_struct, refcount, clone API</small>
+        </a>
+        <a href="#implementation" class="timeline-step">
+          <span>3</span>
+          <strong>구현 코드</strong>
+          <small>proc.c, exec.c, uthread.c</small>
+        </a>
+        <a href="#scenarios" class="timeline-step">
+          <span>4</span>
+          <strong>실행 흐름</strong>
+          <small>create/join, exit/exec/kill/wait</small>
+        </a>
+        <a href="#quiz" class="timeline-step">
+          <span>5</span>
+          <strong>자가 점검</strong>
+          <small>헷갈리는 edge case 확인</small>
+        </a>
+      </div>
+    </section>
+
+    <section id="idea" class="content-section slide" data-title="이론적 기반">
+      <div class="section-heading">
+        <p class="section-label">Part 1</p>
+        <h2>이론적 기반: process와 thread의 차이</h2>
+        <p>
+          명세의 핵심 문장은 “process와 thread는 같은 kernel object이고, 무엇을 공유하느냐만 다르다”입니다.
+          xv6에서는 이 말이 특히 중요합니다.
+        </p>
+      </div>
+
+      <div class="compare-grid">
+        <article class="concept-card">
+          <h3>기존 xv6 process</h3>
+          <p>
+            기존 xv6의 <code>struct proc</code>는 실행 문맥과 주소 공간을 한 구조체에 같이 들고 있습니다.
+            따라서 <code>fork()</code>로 실행 단위를 하나 더 만들면 주소 공간도 함께 복사됩니다.
+          </p>
+          <div class="mini-diagram split">
+            <div>
+              <strong>proc A</strong>
+              <span>context</span>
+              <span>kstack</span>
+              <span>pagetable</span>
+              <span>sz</span>
+            </div>
+            <div>
+              <strong>proc B</strong>
+              <span>context</span>
+              <span>kstack</span>
+              <span>new pagetable</span>
+              <span>copied sz</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="concept-card accent">
+          <h3>이번 과제의 thread</h3>
+          <p>
+            thread도 scheduler 입장에서는 <code>proc</code>입니다.
+            다만 <code>CLONE_VM</code>으로 생성된 proc는 부모의 <code>mm_struct</code>를 공유합니다.
+          </p>
+          <div class="mini-diagram shared">
+            <div><strong>proc p0</strong><span>context</span><span>trapframe</span></div>
+            <div><strong>proc p1</strong><span>context</span><span>trapframe</span></div>
+            <div class="shared-mm"><strong>shared mm</strong><span>pagetable + sz</span></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="principle-grid">
+        <article>
+          <h3>실행 단위</h3>
+          <p><code>context</code>, kernel stack, trapframe, PID는 task마다 따로 있습니다. scheduler는 각 thread를 독립적으로 고릅니다.</p>
+        </article>
+        <article>
+          <h3>공유 단위</h3>
+          <p><code>pagetable</code>과 <code>sz</code>는 <code>mm_struct</code> 안에 있고, thread group이 함께 봅니다.</p>
+        </article>
+        <article>
+          <h3>lifetime 문제</h3>
+          <p>여러 task가 같은 mm을 가리키므로, 마지막 task가 사라질 때만 page table을 해제해야 합니다.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="design" class="content-section band slide" data-title="명세 설계">
+      <div class="section-heading">
+        <p class="section-label">Part 2</p>
+        <h2>명세의 설계: mm_struct, refcount, trapframe slot</h2>
+      </div>
+
+      <div class="two-column">
+        <div class="explain-block">
+          <h3>1. <code>mm_struct</code>는 주소 공간의 소유권을 표현합니다</h3>
+          <p>
+            기존 xv6에서는 <code>proc</code>가 직접 <code>pagetable</code>과 <code>sz</code>를 들고 있었습니다.
+            skeleton은 이를 <code>mm_struct</code>로 분리했습니다. 이때 <code>refcount</code>는 몇 개의 task가
+            같은 주소 공간을 공유하는지 나타냅니다.
+          </p>
+          <pre><code>struct mm_struct {
+  pagetable_t pagetable;
+  uint64 sz;
+  int refcount;
+  struct spinlock lock;
+};</code></pre>
+        </div>
+        <div class="interactive-card">
+          <div class="card-title-row">
+            <h3>refcount 시뮬레이터</h3>
+            <button class="small-button" id="reset-ref">초기화</button>
+          </div>
+          <div class="ref-sim" aria-live="polite">
+            <div class="ref-mm">
+              <strong>mm_struct</strong>
+              <span id="ref-count">refcount = 1</span>
+            </div>
+            <div class="thread-dots" id="thread-dots"></div>
+          </div>
+          <div class="button-row">
+            <button class="small-button" id="add-thread">thread 생성</button>
+            <button class="small-button" id="join-thread">thread join</button>
+          </div>
+          <p class="hint">마지막 참조가 사라질 때만 page table과 mm이 해제됩니다.</p>
+        </div>
+      </div>
+
+      <div class="two-column reverse">
+        <div class="interactive-card">
+          <div class="card-title-row">
+            <h3>trapframe slot</h3>
+            <button class="small-button" id="reset-slots">초기화</button>
+          </div>
+          <div class="slot-grid" id="slot-grid" aria-label="trapframe slots"></div>
+          <div class="button-row">
+            <button class="small-button" id="alloc-slot">slot 할당</button>
+            <button class="small-button" id="free-slot">slot 반환</button>
+          </div>
+          <p class="hint">명세의 <code>NTHREAD=8</code> 때문에 동시에 쓸 수 있는 trapframe slot이 제한됩니다.</p>
+        </div>
+        <div class="explain-block">
+          <h3>2. thread마다 다른 trapframe VA가 필요합니다</h3>
+          <p>
+            thread들은 page table을 공유하므로 모든 thread가 같은 <code>TRAPFRAME</code> VA를 쓰면 register 저장 위치가 충돌합니다.
+            skeleton은 <code>TRAPFRAME</code> 아래에 8개의 slot을 예약하고, 각 thread의 <code>tf_va</code>를
+            <code>sscratch</code>에 넣어 trap 진입 시 자기 trapframe을 찾도록 바꿨습니다.
+          </p>
+          <pre><code>#define NTHREAD 8
+#define USERTOP (TRAPFRAME - NTHREAD * PGSIZE)
+
+prepare_return(): w_sscratch(p-&gt;tf_va)
+uservec:          csrrw a0, sscratch, a0</code></pre>
+        </div>
+      </div>
+
+      <div class="system-call-map">
+        <h3>clone 하나로 fork와 thread_create를 나누는 방식</h3>
+        <div class="clone-switch" role="group" aria-label="clone mode selector">
+          <button class="switch-button active" data-mode="fork">clone(0)</button>
+          <button class="switch-button" data-mode="thread">clone(CLONE_VM)</button>
+        </div>
+        <div class="clone-output" id="clone-output"></div>
+      </div>
+    </section>
+
+    <section id="implementation" class="content-section slide" data-title="구현 코드">
+      <div class="section-heading">
+        <p class="section-label">Part 3</p>
+        <h2>우리가 구현한 코드의 의미</h2>
+        <p>
+          수정의 중심은 <code>kernel/proc.c</code>, <code>kernel/exec.c</code>, <code>user/uthread.c</code>입니다.
+          아래 코드 지도는 “무엇을 고쳤고 왜 필요한지”를 함수 단위로 정리합니다.
+        </p>
+      </div>
+
+      <div id="code-map" class="code-map">
+        <aside class="code-tabs" aria-label="code sections">
+          <button class="code-tab active" data-code="memory">memory helpers</button>
+          <button class="code-tab" data-code="clone">kclone</button>
+          <button class="code-tab" data-code="joinwait">join / wait</button>
+          <button class="code-tab" data-code="wide">exit / kill / exec</button>
+          <button class="code-tab" data-code="userlib">user library</button>
+        </aside>
+        <article class="code-panel" id="code-panel"></article>
+      </div>
+
+      <div class="implementation-grid">
+        <article class="note-card">
+          <h3><code>fn == 0</code>을 막지 않은 이유</h3>
+          <p>
+            xv6 user text가 VA 0에서 시작할 수 있어서 정상 함수 주소가 0일 수 있습니다.
+            그래서 <code>thread_create()</code>와 <code>kclone()</code>에서 function pointer 0을 무조건 오류로 보지 않았습니다.
+          </p>
+        </article>
+        <article class="note-card">
+          <h3>stack은 kernel이 free하지 않습니다</h3>
+          <p>
+            stack은 <code>thread_create()</code>가 user heap에서 <code>malloc()</code>으로 잡습니다.
+            kernel의 <code>join()</code>은 stack base만 돌려주고, <code>thread_join()</code>이 <code>free()</code>합니다.
+          </p>
+        </article>
+        <article class="note-card">
+          <h3>fd와 cwd는 공유가 아니라 복제</h3>
+          <p>
+            명세상 thread 생성 시 file descriptor와 cwd는 POSIX thread처럼 공유하지 않고 기존 fork처럼 duplicate합니다.
+            따라서 같은 파일을 읽어도 file struct는 독립적으로 움직일 수 있습니다.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section id="scenarios" class="content-section band slide" data-title="실행 흐름">
+      <div class="section-heading">
+        <p class="section-label">Execution Flow</p>
+        <h2>실행 흐름으로 다시 보기</h2>
+        <p>시스템 콜 하나가 어떤 kernel 함수와 resource 변화를 일으키는지 trace로 따라갑니다.</p>
+      </div>
+
+      <div class="scenario-layout">
+        <div class="scenario-list" role="tablist" aria-label="scenario selector">
+          <button class="scenario-button active" data-scenario="create">thread_create → clone → join</button>
+          <button class="scenario-button" data-scenario="leader-exit">leader exit</button>
+          <button class="scenario-button" data-scenario="exec">leader exec / non-leader exec</button>
+          <button class="scenario-button" data-scenario="kill">kill(tid)</button>
+          <button class="scenario-button" data-scenario="fork">non-leader fork</button>
+          <button class="scenario-button" data-scenario="sbrk">sbrk와 vmfault caveat</button>
+        </div>
+        <div class="scenario-panel" id="scenario-panel"></div>
+      </div>
+
+      <div class="matrix-wrap">
+        <h3>process-wide system call 의미 정리</h3>
+        <table class="semantic-table">
+          <thead>
+            <tr>
+              <th>동작</th>
+              <th>일반 process</th>
+              <th>thread group에서의 의미</th>
+              <th>우리 구현</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>wait()</code></td>
+              <td>child process zombie 회수</td>
+              <td>sibling thread는 wait 대상이 아님</td>
+              <td>group leader child만 회수</td>
+            </tr>
+            <tr>
+              <td><code>join()</code></td>
+              <td>기존 xv6에는 없음</td>
+              <td>같은 group의 종료 thread 회수</td>
+              <td>ustack 반환 후 freeproc</td>
+            </tr>
+            <tr>
+              <td><code>exit()</code></td>
+              <td>자기 process 종료</td>
+              <td>leader는 group teardown, thread는 자기만 종료</td>
+              <td>leader면 drain_siblings</td>
+            </tr>
+            <tr>
+              <td><code>kill(pid)</code></td>
+              <td>해당 pid 하나 kill</td>
+              <td>pid가 tid여도 group 전체 kill</td>
+              <td>target의 group_leader/tgid 기준으로 전체 killed</td>
+            </tr>
+            <tr>
+              <td><code>exec()</code></td>
+              <td>현재 image 교체</td>
+              <td>주소 공간이 바뀌므로 sibling 정리 필요</td>
+              <td>non-leader 금지, leader 성공 commit 직전 drain</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tests" class="content-section slide" data-title="테스트 결과">
+      <div class="section-heading">
+        <p class="section-label">Validation</p>
+        <h2>테스트가 확인한 것</h2>
+      </div>
+      <div class="test-grid">
+        <article class="test-card">
+          <strong>threadtest</strong>
+          <span>PASS ALL: 19 / 19</span>
+          <p>create/join, shared global/heap, stack isolation, trapframe slot limit, slot reuse, sbrk 동작을 확인했습니다.</p>
+        </article>
+        <article class="test-card">
+          <strong>threadtest2</strong>
+          <span>TEST 1-9 PASS</span>
+          <p>leader exit, exec, non-leader tid kill, wait의 group leader 처리, concurrency sbrk edge case를 확인했습니다.</p>
+        </article>
+        <article class="test-card">
+          <strong>watershapetest</strong>
+          <span>ALL TESTS DONE</span>
+          <p>fd duplication, non-leader exec 실패, kill group, trapframe slot 재사용 등 추가 corner case를 확인했습니다.</p>
+        </article>
+        <article class="test-card">
+          <strong>usertests</strong>
+          <span>PASS ALL TESTS</span>
+          <p>기존 xv6 동작이 thread 구현 때문에 깨지지 않았는지 확인했습니다.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="quiz" class="content-section band slide" data-title="자가 점검">
+      <div class="section-heading">
+        <p class="section-label">Self Check</p>
+        <h2>스스로 설명할 수 있어야 하는 질문</h2>
+        <p>각 질문을 먼저 직접 답해보고 카드를 눌러 해설을 확인하세요.</p>
+      </div>
+      <div class="quiz-grid">
+        <button class="quiz-card">
+          <span>Q1</span>
+          <strong>왜 <code>mm_put()</code>이 마지막 refcount에서만 page table을 free해야 할까?</strong>
+          <em>thread들이 같은 mm을 공유하기 때문입니다. 하나가 exit했다고 page table을 지우면 나머지 thread가 같은 주소 공간을 실행하다가 깨집니다.</em>
+        </button>
+        <button class="quiz-card">
+          <span>Q2</span>
+          <strong><code>thread_join()</code>이 stack을 free하는 이유는?</strong>
+          <em>stack은 user library가 malloc으로 할당했으므로 같은 layer의 user library가 free해야 합니다. kernel은 user heap allocator를 모릅니다.</em>
+        </button>
+        <button class="quiz-card">
+          <span>Q3</span>
+          <strong>왜 non-leader의 <code>exec()</code>를 금지했을까?</strong>
+          <em>exec는 process image 전체를 바꿉니다. sibling들이 같은 page table을 공유하므로 한 thread만 image를 바꾸는 의미가 모호하고 위험합니다.</em>
+        </button>
+        <button class="quiz-card">
+          <span>Q4</span>
+          <strong><code>kill()</code>에 thread pid가 들어오면 어떻게 해야 할까?</strong>
+          <em>Q&amp;A 기준으로 충분히 가능하며, target이 속한 thread group 전체를 killed 상태로 만들어야 합니다.</em>
+        </button>
+        <button class="quiz-card">
+          <span>Q5</span>
+          <strong>non-leader가 <code>fork()</code>하면 child는 어느 group에 속할까?</strong>
+          <em>child의 parent는 fork를 호출한 thread이지만, child 자신이 leader인 새로운 thread group이 됩니다.</em>
+        </button>
+        <button class="quiz-card">
+          <span>Q6</span>
+          <strong>왜 <code>vm.c</code>는 수정하지 않았을까?</strong>
+          <em>vmfault/page table race는 실제로 존재하지만 채점 범위 밖이라고 안내되었습니다. 완전 수정은 vmfault, kclone, growproc 전반의 lock discipline이 필요합니다.</em>
+        </button>
+      </div>
+    </section>
+
+    <section id="takeaway" class="content-section slide" data-title="최종 정리">
+      <div class="section-heading">
+        <p class="section-label">Takeaway</p>
+        <h2>한 문장으로 정리</h2>
+      </div>
+      <div class="takeaway">
+        <p>
+          이번 과제는 xv6에서 <strong>“proc는 실행 단위이고, mm_struct는 공유 주소 공간이다”</strong>라는 경계를 세우는 작업입니다.
+          이 경계만 정확히 잡으면 <code>clone(CLONE_VM)</code>, <code>join()</code>, <code>exit()</code>, <code>exec()</code>,
+          <code>kill()</code>, <code>wait()</code>의 구현 이유가 모두 같은 방향으로 설명됩니다.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <div class="deck-controls" aria-label="slide controls">
+    <button class="control-button" id="prev-slide" type="button" aria-label="previous slide">이전</button>
+    <div class="slide-status">
+      <span id="slide-counter">1 / 9</span>
+      <div class="progress-track"><span id="deck-progress"></span></div>
+    </div>
+    <button class="control-button" id="next-slide" type="button" aria-label="next slide">다음</button>
+  </div>
+
+  <footer class="footer">
+    <span>Built from Project2-1 명세, 제출 보고서, xv6 구현 코드</span>
+    <a href="#overview">맨 위로</a>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>
