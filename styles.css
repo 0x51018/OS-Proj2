@@ -1052,6 +1052,62 @@ main {
   font-weight: 820;
 }
 
+.expected-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.expected-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.expected-card.hot {
+  border-color: #d6a54f;
+}
+
+.expected-card summary {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+  padding: 0.95rem 1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.expected-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.expected-card summary span {
+  display: inline-grid;
+  min-height: 30px;
+  place-items: center;
+  padding: 0.25rem 0.5rem;
+  color: #fff;
+  background: var(--slate);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.expected-card.hot summary span {
+  background: var(--amber);
+}
+
+.expected-card summary strong {
+  line-height: 1.35;
+}
+
+.expected-card p {
+  margin: 0;
+  padding: 0 1rem 1rem calc(104px + 1.85rem);
+  color: #45546b;
+}
+
 .quiz-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1159,6 +1215,15 @@ main {
   .code-points,
   .clone-output {
     grid-template-columns: 1fr;
+  }
+
+  .expected-card summary {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .expected-card p {
+    padding-left: 1rem;
   }
 
   .code-deep-dive li {
@@ -1282,6 +1347,7 @@ main {
   .implementation-grid,
   .test-grid,
   .quiz-grid,
+  .expected-list,
   .mini-diagram.split,
   .mini-diagram.shared {
     grid-template-columns: 1fr;
@@ -1352,6 +1418,15 @@ main {
   }
 
   .code-deep-dive span {
+    font-size: 0.94rem;
+  }
+
+  .expected-card summary {
+    padding: 0.85rem;
+  }
+
+  .expected-card p {
+    padding: 0 0.85rem 0.9rem;
     font-size: 0.94rem;
   }
 

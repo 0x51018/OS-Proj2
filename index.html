@@ -20,6 +20,7 @@
       <a href="#design">설계</a>
       <a href="#implementation">코드</a>
       <a href="#scenarios">흐름</a>
+      <a href="#expected-qa">예상</a>
       <a href="#quiz">점검</a>
     </nav>
   </header>
@@ -411,6 +412,116 @@ uservec:          csrrw a0, sscratch, a0</code></pre>
       </div>
     </section>
 
+    <section id="expected-qa" class="content-section band slide" data-title="예상 Q&A">
+      <div class="section-heading">
+        <p class="section-label">Expected Questions</p>
+        <h2>예상 질문 및 답변</h2>
+        <p>기출과 유사한 질문을 중심으로, 빈칸/구술/코드 설명 상황에서 바로 말할 수 있게 정리했습니다.</p>
+      </div>
+
+      <div class="expected-list">
+        <details class="expected-card hot" open>
+          <summary><span>기출 유사 1</span><strong><code>kill(pid)</code> 했을 때 같은 process의 다른 thread들은 어떻게 되는가?</strong></summary>
+          <p><code>pid</code>가 leader pid든 일반 thread pid든, target이 속한 thread group 전체가 종료 대상으로 잡힙니다. 구현에서는 먼저 target의 <code>group_leader</code>와 <code>tgid</code>를 찾고, proc table을 돌면서 같은 group에 속한 모든 proc에 <code>killed = 1</code>을 설정합니다. 잠든 thread는 <code>RUNNABLE</code>로 깨워서 killed 플래그를 확인하고 exit 경로로 들어갈 수 있게 합니다.</p>
+        </details>
+
+        <details class="expected-card hot">
+          <summary><span>기출 유사 2</span><strong><code>find_free_tf_va()</code>의 목적과 내 코드 흐름을 설명하라.</strong></summary>
+          <p>thread들은 같은 page table을 공유하지만 trapframe은 각자 따로 가져야 합니다. 같은 <code>TRAPFRAME</code> VA 하나만 쓰면 여러 thread의 register 저장 공간이 충돌하므로, <code>TRAPFRAME</code> 아래에 있는 여러 slot 중 비어 있는 VA를 찾아야 합니다. <code>find_free_tf_va()</code>는 page table을 확인하면서 유효한 PTE가 없는 slot을 찾고, 그 VA를 새 thread의 <code>tf_va</code>로 돌려줍니다. 이후 <code>mappages()</code>가 그 VA를 새 thread의 physical trapframe page에 연결합니다.</p>
+        </details>
+
+        <details class="expected-card hot">
+          <summary><span>기출 유사 3</span><strong><code>kexit</code>에서 leader exit 빈칸이 나오면 무엇을 써야 하고 왜인가?</strong></summary>
+          <p>핵심 빈칸은 <code>if(p-&gt;group_leader == p) drain_siblings(p);</code> 입니다. 현재 proc가 group leader이면 process 전체가 종료되는 의미이므로 sibling thread들을 먼저 kill하고, ZOMBIE가 될 때까지 기다린 뒤 정리해야 합니다. 반대로 non-leader thread는 자기만 ZOMBIE가 되고, 나중에 <code>join()</code>으로 회수됩니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q4</span><strong><code>clone(0)</code>과 <code>clone(CLONE_VM)</code>의 차이는?</strong></summary>
+          <p><code>clone(0)</code>은 fork처럼 새 <code>mm_struct</code>와 새 page table을 만들고 부모 주소 공간을 복사합니다. <code>clone(CLONE_VM)</code>은 새 proc만 만들고 부모의 <code>mm_struct</code>를 공유합니다. 그래서 전자는 부모/자식 메모리가 독립이고, 후자는 heap/global을 공유하는 thread가 됩니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q5</span><strong>왜 <code>mm_get()</code>과 <code>mm_put()</code>이 필요한가?</strong></summary>
+          <p>여러 thread가 같은 <code>mm_struct</code>를 공유하므로 주소 공간의 lifetime을 proc 하나의 lifetime과 분리해야 합니다. <code>mm_get()</code>은 공유 사용자가 늘 때 refcount를 증가시키고, <code>mm_put()</code>은 사용자가 사라질 때 refcount를 감소시킵니다. refcount가 0일 때만 page table과 mm을 free해야 남은 thread가 깨지지 않습니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q6</span><strong>왜 thread마다 trapframe이 따로 필요한가?</strong></summary>
+          <p>trapframe에는 user mode로 돌아가기 위한 register 상태, 예를 들어 <code>epc</code>, <code>sp</code>, <code>a0</code> 등이 저장됩니다. thread마다 실행 위치와 stack, register 값이 다르므로 trapframe을 공유하면 서로의 상태를 덮어써서 잘못된 위치로 복귀하게 됩니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q7</span><strong>새 thread에서 <code>epc</code>, <code>a0</code>, <code>sp</code>를 왜 설정하는가?</strong></summary>
+          <p><code>epc = fn</code>은 새 thread가 user mode로 돌아갔을 때 <code>fn</code> 함수부터 실행하게 합니다. <code>a0 = arg</code>는 RISC-V calling convention에서 첫 번째 인자를 전달하기 위한 설정입니다. <code>sp = stack + n_pages * PGSIZE</code>는 새 thread가 할당받은 user stack의 맨 위에서 시작하게 하기 위한 설정입니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q8</span><strong><code>join()</code>과 <code>wait()</code>의 대상은 어떻게 다른가?</strong></summary>
+          <p><code>join()</code>은 같은 thread group 안의 non-leader ZOMBIE thread를 회수합니다. <code>wait()</code>은 현재 proc의 child 중 group leader인 ZOMBIE process만 회수합니다. thread는 stack 주소를 돌려줘야 하므로 join이 처리하고, process child는 exit status를 돌려줘야 하므로 wait이 처리합니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q9</span><strong>왜 <code>wait()</code>이 thread zombie를 회수하면 안 되는가?</strong></summary>
+          <p>thread stack은 user library가 <code>malloc()</code>으로 할당했기 때문에, 종료 후 stack base를 user에게 돌려주고 <code>free()</code>해야 합니다. 만약 <code>wait()</code>이 thread를 먼저 <code>freeproc()</code> 해버리면 <code>ustack</code> 정보를 잃어버려 stack을 free할 수 없고 memory leak이 생깁니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q10</span><strong><code>thread_create()</code>와 <code>thread_join()</code>에서 user library가 맡는 책임은?</strong></summary>
+          <p><code>thread_create()</code>는 user heap에서 stack을 <code>malloc(n_pages * PGSIZE)</code>로 할당하고 <code>clone(..., CLONE_VM)</code>을 호출합니다. <code>thread_join()</code>은 kernel의 <code>join()</code>이 돌려준 stack base를 받아 <code>free()</code>합니다. kernel은 user heap allocator를 모르기 때문에 stack allocation/free는 user library 책임입니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q11</span><strong>왜 non-leader thread의 <code>exec()</code>를 금지했는가?</strong></summary>
+          <p><code>exec()</code>는 주소 공간 전체를 새 프로그램 image로 바꾸는 syscall입니다. thread들은 같은 page table을 공유하므로 non-leader 하나가 exec를 하면 sibling thread들이 실행하던 code/stack/global이 갑자기 사라질 수 있습니다. 그래서 이 구현에서는 leader만 exec를 허용하고, non-leader는 <code>-1</code>을 반환합니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q12</span><strong>leader가 <code>exec()</code>할 때 왜 commit 직전에 <code>drain_siblings()</code>를 호출하는가?</strong></summary>
+          <p>exec는 파일 열기, ELF 검증, segment load, argument copy 중간에 실패할 수 있습니다. 너무 일찍 sibling을 죽이면 exec 실패 후에도 기존 thread group이 망가집니다. 그래서 새 page table 준비가 성공하고 실제로 <code>p-&gt;mm-&gt;pagetable</code>을 바꾸기 직전에 sibling들을 정리합니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q13</span><strong><code>group_leader</code>와 <code>tgid</code>는 각각 무엇인가?</strong></summary>
+          <p><code>group_leader</code>는 thread group의 대표 proc를 가리키는 포인터입니다. <code>tgid</code>는 thread group id이고 보통 leader의 pid와 같습니다. 각 thread는 서로 다른 pid를 갖지만 같은 group이면 같은 leader와 같은 tgid를 가집니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q14</span><strong>non-leader가 <code>fork()</code>하면 child는 어느 group에 속하는가?</strong></summary>
+          <p>fork는 <code>CLONE_VM</code> 없이 동작하므로 child는 부모의 mm을 공유하지 않고 새 <code>mm_struct</code>와 새 page table을 받습니다. child의 parent는 fork를 호출한 thread이지만, child 자신이 새 thread group의 leader가 되고 <code>tgid = child pid</code>가 됩니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q15</span><strong><code>freeproc()</code>에서 trapframe mapping을 왜 먼저 unmap하는가?</strong></summary>
+          <p>thread마다 공유 page table 안에 자기 <code>tf_va</code> slot을 mapping해 두었습니다. proc를 정리할 때 이 mapping을 지우지 않으면 slot이 계속 사용 중인 것처럼 남거나 죽은 physical page를 가리킬 수 있습니다. 그래서 <code>uvmunmap()</code>으로 mapping을 제거한 뒤 physical trapframe page를 <code>kfree()</code>합니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q16</span><strong>왜 <code>copyout()</code>을 사용해서 stack 주소나 exit status를 user에게 전달하는가?</strong></summary>
+          <p>kernel은 user pointer를 그냥 C 포인터처럼 직접 대입하면 안 됩니다. user 주소가 현재 page table에서 유효한지 확인하며 안전하게 써야 하므로 <code>copyout()</code>을 사용합니다. join에서는 stack 주소를, wait에서는 exit status를 user memory에 복사합니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q17</span><strong>thread들이 file descriptor와 cwd를 공유하는가?</strong></summary>
+          <p>이 과제의 구현에서는 POSIX thread처럼 fd table을 공유하지 않습니다. <code>kclone()</code>의 common path에서 기존 fork처럼 <code>filedup()</code>과 <code>idup()</code>으로 open file과 cwd를 복제합니다. 그래서 메모리는 공유하지만 fd/cwd는 명세상 duplicate된다고 설명해야 합니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q18</span><strong>왜 <code>NTHREAD</code> 제한이 생기는가?</strong></summary>
+          <p>공유 page table 안에서 thread마다 고유한 trapframe VA slot이 필요하고, skeleton은 <code>TRAPFRAME</code> 아래에 <code>NTHREAD</code>개의 slot만 예약합니다. 모든 slot이 사용 중이면 <code>find_free_tf_va()</code>가 0을 반환하고 새 thread 생성은 실패해야 합니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q19</span><strong><code>getpid()</code>를 thread 안에서 호출하면 무엇을 반환하는가?</strong></summary>
+          <p>명세상 각 thread도 하나의 proc이고 고유한 pid를 가집니다. 따라서 thread 안에서 <code>getpid()</code>를 호출하면 leader pid가 아니라 그 thread 자신의 pid, 즉 TID에 가까운 값을 반환합니다. group 전체의 id는 <code>tgid</code>로 따로 관리합니다.</p>
+        </details>
+
+        <details class="expected-card">
+          <summary><span>Q20</span><strong>이번 과제의 핵심 설계를 한 문장으로 말하면?</strong></summary>
+          <p><code>proc</code>는 scheduler가 다루는 실행 단위로 남기고, 주소 공간은 <code>mm_struct</code>로 분리해서 여러 proc가 같은 mm을 공유할 수 있게 만든 것입니다. 그래서 <code>clone(0)</code>은 주소 공간 복사, <code>clone(CLONE_VM)</code>은 주소 공간 공유라는 두 의미를 하나의 생성 함수로 처리합니다.</p>
+        </details>
+      </div>
+    </section>
+
     <section id="quiz" class="content-section band slide" data-title="자가 점검">
       <div class="section-heading">
         <p class="section-label">Self Check</p>
@@ -469,7 +580,7 @@ uservec:          csrrw a0, sscratch, a0</code></pre>
   <div class="deck-controls" aria-label="slide controls">
     <button class="control-button" id="prev-slide" type="button" aria-label="previous slide">이전</button>
     <div class="slide-status">
-      <span id="slide-counter">1 / 9</span>
+      <span id="slide-counter">1 / 10</span>
       <div class="progress-track"><span id="deck-progress"></span></div>
     </div>
     <button class="control-button" id="next-slide" type="button" aria-label="next slide">다음</button>
