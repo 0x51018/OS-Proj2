@@ -370,6 +370,8 @@ function showSlide(index, target = null) {
 
   if (target && target !== slide) {
     requestAnimationFrame(() => target.scrollIntoView({ block: "start", behavior: "smooth" }));
+  } else if (window.matchMedia("(max-width: 720px)").matches) {
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 }
 

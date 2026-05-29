@@ -1168,24 +1168,58 @@ main {
 }
 
 @media (max-width: 720px) {
-  .topbar {
-    position: fixed;
-    align-items: flex-start;
-    flex-direction: column;
+  body {
+    overflow-y: auto;
   }
 
-  .slide-rail {
+  .topbar {
     display: none;
   }
 
+  .slide-rail {
+    position: static;
+    display: block;
+    width: min(var(--max), calc(100% - 2rem));
+    max-height: none;
+    margin: 1rem auto 0;
+    padding: 0.85rem;
+    overflow: visible;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  .rail-title {
+    padding: 0 0 0.65rem;
+  }
+
+  .slide-rail-list {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+    margin-top: 0.7rem;
+  }
+
+  .rail-button {
+    min-height: 44px;
+    padding: 0.5rem;
+  }
+
   .deck {
-    height: 100vh;
+    height: auto;
     margin-left: 0;
-    padding-top: 134px;
+    padding-top: 0;
+    overflow: visible;
   }
 
   .deck .slide.active {
-    height: calc(100vh - 134px);
+    height: auto;
+    overflow-y: visible;
+    scrollbar-gutter: auto;
+  }
+
+  .deck .hero.slide.active {
+    display: flex;
   }
 
   .deck-controls {
