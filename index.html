@@ -19,6 +19,7 @@
       <a href="#idea">이론</a>
       <a href="#design">설계</a>
       <a href="#implementation">코드</a>
+      <a href="#function-diffs">전체</a>
       <a href="#scenarios">흐름</a>
       <a href="#expected-qa">예상</a>
       <a href="#quiz">점검</a>
@@ -317,6 +318,30 @@ uservec:          csrrw a0, sscratch, a0</code></pre>
       </div>
     </section>
 
+    <section id="function-diffs" class="content-section band slide" data-title="함수 diff">
+      <div class="section-heading">
+        <p class="section-label">Full Code</p>
+        <h2>수정 함수 전체 코드 diff</h2>
+        <p>
+          원본 skeleton 대비 수정된 함수들을 함수 단위로 펼쳐서 보여줍니다.
+          <code>+</code>는 추가된 줄, <code>-</code>는 삭제된 줄입니다.
+        </p>
+      </div>
+
+      <div class="diff-map">
+        <aside class="diff-tabs" aria-label="modified function diff sections">
+          <button class="diff-tab active" data-diff="memory">mm / trapframe</button>
+          <button class="diff-tab" data-diff="freegrow">freeproc / growproc</button>
+          <button class="diff-tab" data-diff="clone">kclone</button>
+          <button class="diff-tab" data-diff="joinwait">kjoin / kwait</button>
+          <button class="diff-tab" data-diff="exitkill">kexit / kill</button>
+          <button class="diff-tab" data-diff="exec">kexec</button>
+          <button class="diff-tab" data-diff="uthread">uthread.c</button>
+        </aside>
+        <article class="diff-panel" id="diff-panel"></article>
+      </div>
+    </section>
+
     <section id="scenarios" class="content-section band slide" data-title="실행 흐름">
       <div class="section-heading">
         <p class="section-label">Execution Flow</p>
@@ -580,7 +605,7 @@ uservec:          csrrw a0, sscratch, a0</code></pre>
   <div class="deck-controls" aria-label="slide controls">
     <button class="control-button" id="prev-slide" type="button" aria-label="previous slide">이전</button>
     <div class="slide-status">
-      <span id="slide-counter">1 / 10</span>
+      <span id="slide-counter">1 / 11</span>
       <div class="progress-track"><span id="deck-progress"></span></div>
     </div>
     <button class="control-button" id="next-slide" type="button" aria-label="next slide">다음</button>

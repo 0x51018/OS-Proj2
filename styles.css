@@ -403,10 +403,11 @@ main {
 .interactive-card,
 .concept-card,
 .note-card,
-.test-card,
-.code-map,
-.scenario-panel,
-.takeaway {
+  .test-card,
+  .code-map,
+  .diff-map,
+  .scenario-panel,
+  .takeaway {
   background: var(--white);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -954,6 +955,75 @@ main {
   margin-top: 1rem;
 }
 
+.diff-map {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.diff-tabs {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+  padding: 1rem;
+  background: #f4f7fa;
+  border-right: 1px solid var(--line);
+}
+
+.diff-tab {
+  padding: 0.72rem 0.8rem;
+}
+
+.diff-panel {
+  min-width: 0;
+  min-height: 520px;
+  padding: 1.25rem;
+}
+
+.diff-panel h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.28rem;
+}
+
+.diff-summary {
+  margin: 0 0 1rem;
+  color: var(--muted);
+}
+
+.diff-code {
+  margin-top: 0;
+  padding: 0;
+}
+
+.diff-code code {
+  display: block;
+  padding: 0.9rem 0;
+}
+
+.diff-line {
+  display: block;
+  min-height: 1.45em;
+  padding: 0 0.9rem;
+  white-space: pre;
+}
+
+.diff-line.add {
+  color: #d8f7dd;
+  background: rgba(21, 128, 61, 0.22);
+}
+
+.diff-line.del {
+  color: #ffd7d4;
+  background: rgba(180, 35, 24, 0.22);
+}
+
+.diff-line.hunk {
+  color: #bfdbfe;
+  background: rgba(37, 99, 235, 0.24);
+  font-weight: 800;
+}
+
 .scenario-layout {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -1206,7 +1276,17 @@ main {
     grid-template-columns: 1fr;
   }
 
+  .diff-map {
+    grid-template-columns: 1fr;
+  }
+
   .code-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .diff-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     border-right: 0;
     border-bottom: 1px solid var(--line);
@@ -1370,7 +1450,21 @@ main {
     overflow: visible;
   }
 
+  .diff-map {
+    overflow: visible;
+  }
+
   .code-tabs {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    scroll-snap-type: x proximity;
+  }
+
+  .diff-tabs {
     display: flex;
     gap: 0.5rem;
     padding: 0.75rem;
@@ -1388,13 +1482,30 @@ main {
     white-space: nowrap;
   }
 
+  .diff-tab {
+    flex: 0 0 auto;
+    min-width: 142px;
+    padding: 0.62rem 0.72rem;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+
   .code-panel {
+    min-height: auto;
+    padding: 0.9rem;
+  }
+
+  .diff-panel {
     min-height: auto;
     padding: 0.9rem;
   }
 
   .code-panel h3 {
     font-size: 1.12rem;
+  }
+
+  .diff-panel h3 {
+    font-size: 1.08rem;
   }
 
   .code-panel .code-summary {
@@ -1407,6 +1518,14 @@ main {
 
   pre code {
     font-size: 0.78rem;
+  }
+
+  .diff-code code {
+    font-size: 0.74rem;
+  }
+
+  .diff-line {
+    padding: 0 0.75rem;
   }
 
   .code-points li {

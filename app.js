@@ -245,6 +245,628 @@ thread_join(void)
   }
 };
 
+const functionDiffs = {
+  memory: {
+    title: "kernel/proc.c: mm_get, mm_put, find_free_tf_va",
+    summary: "공유 주소 공간의 refcount와 trapframe slot 탐색을 실제로 채운 부분입니다.",
+    diff: `@@ mm_get(struct mm_struct *mm)
+ void
+ mm_get(struct mm_struct *mm)
+ {
+-  (void)mm;
++  if(mm == 0)
++    return;
++
++  acquire(&mm->lock);
++  mm->refcount++;
++  release(&mm->lock);
+ }
+
+@@ mm_put(struct mm_struct *mm)
+ void
+ mm_put(struct mm_struct *mm)
+ {
+-  (void)mm;
++  pagetable_t pagetable;
++  uint64 sz;
++
++  if(mm == 0)
++    return;
++
++  acquire(&mm->lock);
++  mm->refcount--;
++  if(mm->refcount > 0){
++    release(&mm->lock);
++    return;
++  }
++  pagetable = mm->pagetable;
++  sz = mm->sz;
++  release(&mm->lock);
++
++  if(pagetable)
++    proc_freepagetable(pagetable, sz);
++  kfree(mm);
+ }
+
+@@ find_free_tf_va(pagetable_t pagetable)
+ uint64
+ find_free_tf_va(pagetable_t pagetable)
+ {
+-  (void)pagetable;
++  for(int i = 0; i < NTHREAD; i++){
++    uint64 va = TRAPFRAME - i * PGSIZE;
++    pte_t *pte = walk(pagetable, va, 0);
++    if(pte == 0 || (*pte & PTE_V) == 0)
++      return va;
++  }
+   return 0;
+ }`
+  },
+  freegrow: {
+    title: "kernel/proc.c: freeproc, growproc",
+    summary: "proc 정리 시 trapframe slot을 반납하고, multi-thread 상태에서 shrink를 단순화한 부분입니다.",
+    diff: `@@ freeproc(struct proc *p)
+ static void
+ freeproc(struct proc *p)
+ {
++  if(p->mm && p->tf_va){
++    acquire(&p->mm->lock);
++    uvmunmap(p->mm->pagetable, p->tf_va, 1, 0);
++    release(&p->mm->lock);
++    p->tf_va = 0;
++  }
++
+   if (p->trapframe) {
+     kfree((void *)p->trapframe);
+     p->trapframe = 0;
+   }
+-  p->tf_va = 0;
+
+   if (p->mm) {
+     mm_put(p->mm);
+     p->mm = 0;
+   }
+
+   p->pid = 0;
+   p->parent = 0;
+   p->name[0] = 0;
+   p->chan = 0;
+   p->killed = 0;
+   p->xstate = 0;
+   p->state = UNUSED;
+   p->group_leader = 0;
+   p->tgid = 0;
+   p->ustack = 0;
+ }
+
+@@ growproc(int n)
+ int
+ growproc(int n)
+ {
+   struct proc *p = myproc();
+   struct mm_struct *mm = p->mm;
+   uint64 sz;
+
+   acquire(&mm->lock);
+   sz = mm->sz;
+   if (n > 0) {
+     if (sz + n > USERTOP) {
+       release(&mm->lock);
+       return -1;
+     }
+     if ((sz = uvmalloc(mm->pagetable, sz, sz + n, PTE_W)) == 0) {
+       release(&mm->lock);
+       return -1;
+     }
+   } else if (n < 0) {
++    if(mm->refcount > 1){
++      release(&mm->lock);
++      return 0;
++    }
+     sz = uvmdealloc(mm->pagetable, sz, sz + n);
+   }
+   mm->sz = sz;
+   release(&mm->lock);
+   return 0;
+ }`
+  },
+  clone: {
+    title: "kernel/proc.c: kclone",
+    summary: "CLONE_VM이면 thread path, 아니면 fork path로 갈라지는 핵심 함수입니다.",
+    diff: `@@ kclone(uint64 fn, uint64 arg, uint64 stack, int n_pages, int flags)
+ int
+ kclone(uint64 fn, uint64 arg, uint64 stack, int n_pages, int flags)
+ {
+   int i, pid;
+   struct proc *np;
+   struct proc *p = myproc();
+
+   if ((np = allocproc()) == 0)
+     return -1;
+
+   if (flags & CLONE_VM) {
+     // === thread path ===
+-    freeproc(np);
+-    release(&np->lock);
+-    return -1;
++    if(stack == 0 || n_pages <= 0)
++      goto fail;
++
++    np->mm = p->mm;
++    mm_get(np->mm);
++
++    acquire(&np->mm->lock);
++    np->tf_va = find_free_tf_va(np->mm->pagetable);
++    if(np->tf_va == 0){
++      release(&np->mm->lock);
++      goto fail;
++    }
++    if(mappages(np->mm->pagetable, np->tf_va, PGSIZE,
++                (uint64)np->trapframe, PTE_R | PTE_W) < 0){
++      np->tf_va = 0;
++      release(&np->mm->lock);
++      goto fail;
++    }
++    release(&np->mm->lock);
++
++    np->group_leader = p->group_leader;
++    np->tgid = p->tgid;
++    np->ustack = (void *)stack;
++
++    *(np->trapframe) = *(p->trapframe);
++    np->trapframe->epc = fn;
++    np->trapframe->a0 = arg;
++    np->trapframe->sp = stack + (uint64)n_pages * PGSIZE;
+   } else {
+     // === fork path ===
+     if ((np->mm = mm_alloc()) == 0)
+       goto fail;
+     if ((np->mm->pagetable = proc_pagetable(np)) == 0)
+       goto fail;
+     if (uvmcopy(p->mm->pagetable, np->mm->pagetable, p->mm->sz) < 0)
+       goto fail;
+     np->mm->sz = p->mm->sz;
+     np->group_leader = np;
+     np->tgid         = np->pid;
+
+     // copy parent's user registers; child resumes after the syscall.
+     *(np->trapframe) = *(p->trapframe);
+     np->trapframe->a0 = 0;
+   }
+
+   // === common: files, cwd, name ===
+   for (i = 0; i < NOFILE; i++)
+     if (p->ofile[i])
+       np->ofile[i] = filedup(p->ofile[i]);
+   np->cwd = idup(p->cwd);
+
+   safestrcpy(np->name, p->name, sizeof(p->name));
+
+   pid = np->pid;
+
+   release(&np->lock);
+
+   acquire(&wait_lock);
+   np->parent = p;
+   release(&wait_lock);
+
+   acquire(&np->lock);
+   np->state = RUNNABLE;
+   release(&np->lock);
+
+   return pid;
+
+ fail:
+   freeproc(np);
+   release(&np->lock);
+   return -1;
+ }`
+  },
+  joinwait: {
+    title: "kernel/proc.c: kjoin, kwait",
+    summary: "thread 회수는 join, child process 회수는 wait으로 분리한 부분입니다.",
+    diff: `@@ kjoin(uint64 stack_addr)
+ int
+ kjoin(uint64 stack_addr)
+ {
+-  (void)stack_addr;
+-  return -1;
++  struct proc *pp;
++  struct proc *p = myproc();
++  int havethreads, pid;
++  uint64 stack;
++
++  acquire(&wait_lock);
++
++  for(;;){
++    havethreads = 0;
++    for(pp = proc; pp < &proc[NPROC]; pp++){
++      if(pp == p)
++        continue;
++
++      acquire(&pp->lock);
++      if(pp->group_leader == p->group_leader && pp->group_leader != pp){
++        havethreads = 1;
++        if(pp->state == ZOMBIE){
++          stack = (uint64)pp->ustack;
++          if(stack_addr != 0 &&
++             copyout(p->mm->pagetable, stack_addr,
++                     (char *)&stack, sizeof(stack)) < 0){
++            release(&pp->lock);
++            release(&wait_lock);
++            return -1;
++          }
++          pid = pp->pid;
++          freeproc(pp);
++          release(&pp->lock);
++          release(&wait_lock);
++          return pid;
++        }
++      }
++      release(&pp->lock);
++    }
++
++    if(!havethreads || killed(p)){
++      release(&wait_lock);
++      return -1;
++    }
++
++    sleep(p->group_leader, &wait_lock);
++  }
+ }
+
+@@ kwait(uint64 addr)
+ int
+ kwait(uint64 addr)
+ {
+   struct proc *pp;
+   int havekids, pid;
+   struct proc *p = myproc();
+
+   acquire(&wait_lock);
+
+   for(;;){
+     havekids = 0;
+     for(pp = proc; pp < &proc[NPROC]; pp++){
+       if (pp->parent != p)
+         continue;
+
+       acquire(&pp->lock);
+
++      if(pp->group_leader != pp){
++        release(&pp->lock);
++        continue;
++      }
++
+       havekids = 1;
+       if(pp->state == ZOMBIE){
+         pid = pp->pid;
+         if(addr != 0 && copyout(p->mm->pagetable, addr,
+                                 (char *)&pp->xstate,
+                                 sizeof(pp->xstate)) < 0) {
+           release(&pp->lock);
+           release(&wait_lock);
+           return -1;
+         }
+         freeproc(pp);
+         release(&pp->lock);
+         release(&wait_lock);
+         return pid;
+       }
+       release(&pp->lock);
+     }
+
+     if(!havekids || killed(p)){
+       release(&wait_lock);
+       return -1;
+     }
+
+     sleep(p, &wait_lock);
+   }
+ }`
+  },
+  exitkill: {
+    title: "kernel/proc.c: kexit, kkill, drain_siblings",
+    summary: "leader exit와 kill(pid)를 thread group 단위로 처리하는 부분입니다.",
+    diff: `@@ kexit(int status)
+ void
+ kexit(int status)
+ {
+   struct proc *p = myproc();
+
+   if(p == initproc)
+     panic("init exiting");
+
++  if(p->group_leader == p)
++    drain_siblings(p);
++
+   // Close all open files.
+   for(int fd = 0; fd < NOFILE; fd++){
+     if(p->ofile[fd]){
+       struct file *f = p->ofile[fd];
+       fileclose(f);
+       p->ofile[fd] = 0;
+     }
+   }
+
+   begin_op();
+   iput(p->cwd);
+   end_op();
+   p->cwd = 0;
+
+   acquire(&wait_lock);
+
+   reparent(p);
+   wakeup(p->parent);
+   if (p->group_leader != p)
+     wakeup(p->group_leader);
+
+   acquire(&p->lock);
+
+   p->xstate = status;
+   p->state = ZOMBIE;
+
+   release(&wait_lock);
+   sched();
+   panic("zombie exit");
+ }
+
+@@ kkill(int pid)
+ int
+ kkill(int pid)
+ {
+   struct proc *p;
++  struct proc *leader = 0;
++  int tgid = 0;
+
+   for(p = proc; p < &proc[NPROC]; p++){
+     acquire(&p->lock);
+     if(p->pid == pid){
++      leader = p->group_leader;
++      tgid = p->tgid;
++      release(&p->lock);
++      break;
++    }
++    release(&p->lock);
++  }
++  if(leader == 0)
++    return -1;
++
++  for(p = proc; p < &proc[NPROC]; p++){
++    acquire(&p->lock);
++    if(p->state != UNUSED &&
++       (p->group_leader == leader || p->tgid == tgid)){
+       p->killed = 1;
+-      if(p->state == SLEEPING){
+-        // Wake process from sleep().
++      if(p->state == SLEEPING)
+         p->state = RUNNABLE;
+-      }
+-      release(&p->lock);
+-      return 0;
+     }
+     release(&p->lock);
+   }
+-  return -1;
++  return 0;
++}
++
++void
++drain_siblings(struct proc *leader)
++{
++  struct proc *pp;
++  int live;
++
++  acquire(&wait_lock);
++
++  for(pp = proc; pp < &proc[NPROC]; pp++){
++    if(pp == leader)
++      continue;
++    acquire(&pp->lock);
++    if(pp->state != UNUSED && pp->group_leader == leader){
++      pp->killed = 1;
++      if(pp->state == SLEEPING)
++        pp->state = RUNNABLE;
++    }
++    release(&pp->lock);
++  }
++
++  for(;;){
++    live = 0;
++    for(pp = proc; pp < &proc[NPROC]; pp++){
++      if(pp == leader)
++        continue;
++      acquire(&pp->lock);
++      if(pp->state != UNUSED && pp->group_leader == leader &&
++         pp->state != ZOMBIE)
++        live = 1;
++      release(&pp->lock);
++      if(live)
++        break;
++    }
++    if(!live)
++      break;
++    sleep(leader, &wait_lock);
++  }
++
++  for(pp = proc; pp < &proc[NPROC]; pp++){
++    if(pp == leader)
++      continue;
++    acquire(&pp->lock);
++    if(pp->state == ZOMBIE && pp->group_leader == leader)
++      freeproc(pp);
++    release(&pp->lock);
++  }
++
++  release(&wait_lock);
+ }`
+  },
+  exec: {
+    title: "kernel/exec.c: kexec",
+    summary: "non-leader exec를 금지하고, commit 직전에 sibling을 정리한 뒤 page table을 교체합니다.",
+    diff: `@@ kexec(char *path, char **argv)
+ int
+ kexec(char *path, char **argv)
+ {
+   char *s, *last;
+   int i, off;
+   uint64 argc, sz = 0, sp, ustack[MAXARG], stackbase;
+   struct elfhdr elf;
+   struct inode *ip;
+   struct proghdr ph;
+   pagetable_t pagetable = 0, oldpagetable;
+   struct proc *p = myproc();
+
++  if(p->group_leader != p)
++    return -1;
++
+   begin_op();
+
+   // Open the executable file.
+   if((ip = namei(path)) == 0){
+     end_op();
+     return -1;
+   }
+   ilock(ip);
+
+   if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
+     goto bad;
+   if(elf.magic != ELF_MAGIC)
+     goto bad;
+
+   if((pagetable = proc_pagetable(p)) == 0)
+     goto bad;
+
+   // Load program into memory.
+   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
+     if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
+       goto bad;
+     if(ph.type != ELF_PROG_LOAD)
+       continue;
+     if(ph.memsz < ph.filesz)
+       goto bad;
+     if(ph.vaddr + ph.memsz < ph.vaddr)
+       goto bad;
+     if(ph.vaddr % PGSIZE != 0)
+       goto bad;
+     uint64 sz1;
+     if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz, flags2perm(ph.flags))) == 0)
+       goto bad;
+     sz = sz1;
+     if(loadseg(pagetable, ph.vaddr, ip, ph.off, ph.filesz) < 0)
+       goto bad;
+   }
+   iunlockput(ip);
+   end_op();
+   ip = 0;
+
+   p = myproc();
+-  uint64 oldsz = p->mm->sz;
+
+   sz = PGROUNDUP(sz);
+   uint64 sz1;
+   if((sz1 = uvmalloc(pagetable, sz, sz + (USERSTACK+1)*PGSIZE, PTE_W)) == 0)
+     goto bad;
+   sz = sz1;
+   uvmclear(pagetable, sz-(USERSTACK+1)*PGSIZE);
+   sp = sz;
+   stackbase = sp - USERSTACK*PGSIZE;
+
+   for(argc = 0; argv[argc]; argc++) {
+     if(argc >= MAXARG)
+       goto bad;
+     sp -= strlen(argv[argc]) + 1;
+     sp -= sp % 16;
+     if(sp < stackbase)
+       goto bad;
+     if(copyout(pagetable, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
+       goto bad;
+     ustack[argc] = sp;
+   }
+   ustack[argc] = 0;
+
+   sp -= (argc+1) * sizeof(uint64);
+   sp -= sp % 16;
+   if(sp < stackbase)
+     goto bad;
+   if(copyout(pagetable, sp, (char *)ustack, (argc+1)*sizeof(uint64)) < 0)
+     goto bad;
+
+   p->trapframe->a1 = sp;
+
+   for(last=s=path; *s; s++)
+     if(*s == '/')
+       last = s+1;
+   safestrcpy(p->name, last, sizeof(p->name));
+
+   // Commit to the user image.
++  drain_siblings(p);
++  uint64 oldsz = p->mm->sz;
+   acquire(&p->mm->lock);
+   oldpagetable = p->mm->pagetable;
+   p->mm->pagetable = pagetable;
+   p->mm->sz = sz;
+   release(&p->mm->lock);
+   p->trapframe->epc = elf.entry;
+   p->trapframe->sp = sp;
+   proc_freepagetable(oldpagetable, oldsz);
+
+   return argc;
+
+  bad:
+   if(pagetable)
+     proc_freepagetable(pagetable, sz);
+   if(ip){
+     iunlockput(ip);
+     end_op();
+   }
+   return -1;
+ }`
+  },
+  uthread: {
+    title: "user/uthread.c: thread_create, thread_join",
+    summary: "user library가 stack malloc/free를 담당하고 kernel clone/join을 감싼 부분입니다.",
+    diff: `@@ thread_create(void (*fn)(void *), void *arg, int n_pages)
+ int
+ thread_create(void (*fn)(void *), void *arg, int n_pages)
+ {
+-  (void)fn; (void)arg; (void)n_pages;
+-  return -1;
++  void *stack;
++  int pid;
++
++  if(n_pages <= 0)
++    return -1;
++
++  stack = malloc(n_pages * PGSIZE);
++  if(stack == 0)
++    return -1;
++
++  pid = clone(fn, arg, stack, n_pages, CLONE_VM);
++  if(pid < 0){
++    free(stack);
++    return -1;
++  }
++  return pid;
+ }
+
+@@ thread_join(void)
+ int
+ thread_join(void)
+ {
+-  return -1;
++  void *stack = 0;
++  int pid = join(&stack);
++
++  if(pid < 0)
++    return -1;
++  if(stack)
++    free(stack);
++  return pid;
+ }`
+  }
+};
+
 const scenarios = {
   create: {
     title: "thread_create → clone → join",
@@ -457,6 +1079,16 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;");
 }
 
+function renderDiffCode(diff) {
+  return diff.split("\n").map(line => {
+    let cls = "diff-line";
+    if (line.startsWith("+") && !line.startsWith("+++")) cls += " add";
+    if (line.startsWith("-") && !line.startsWith("---")) cls += " del";
+    if (line.startsWith("@@")) cls += " hunk";
+    return `<span class="${cls}">${escapeHtml(line || " ")}</span>`;
+  }).join("");
+}
+
 function renderCode(key) {
   const data = codeSections[key];
   const panel = document.querySelector("#code-panel");
@@ -478,6 +1110,16 @@ function renderCode(key) {
         `).join("")}
       </ol>
     </div>
+  `;
+}
+
+function renderFunctionDiff(key) {
+  const data = functionDiffs[key];
+  const panel = document.querySelector("#diff-panel");
+  panel.innerHTML = `
+    <h3>${escapeHtml(data.title)}</h3>
+    <p class="diff-summary">${escapeHtml(data.summary)}</p>
+    <pre class="diff-code"><code>${renderDiffCode(data.diff)}</code></pre>
   `;
 }
 
@@ -552,6 +1194,16 @@ function bindCodeTabs() {
   });
 }
 
+function bindFunctionDiffTabs() {
+  document.querySelectorAll(".diff-tab").forEach(button => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll(".diff-tab").forEach(item => item.classList.remove("active"));
+      button.classList.add("active");
+      renderFunctionDiff(button.dataset.diff);
+    });
+  });
+}
+
 function bindScenarios() {
   document.querySelectorAll(".scenario-button").forEach(button => {
     button.addEventListener("click", () => {
@@ -575,12 +1227,14 @@ document.addEventListener("DOMContentLoaded", () => {
   renderRefSim();
   renderSlots();
   renderCode("memory");
+  renderFunctionDiff("memory");
   renderScenario("create");
   bindDeckNavigation();
   bindCloneSwitch();
   bindRefSim();
   bindSlots();
   bindCodeTabs();
+  bindFunctionDiffTabs();
   bindScenarios();
   bindQuiz();
 });
